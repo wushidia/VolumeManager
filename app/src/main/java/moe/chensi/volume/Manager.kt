@@ -3,242 +3,99 @@ package moe.chensi.volume
 import android.annotation.SuppressLint
 import android.app.ActivityManager
 import android.content.Context
-import android.content.pm.ApplicationInfo
 import android.content.pm.PackageManager
-import android.graphics.drawable.Drawable
 import android.media.AudioManager
 import android.media.AudioPlaybackConfiguration
-import android.os.UserHandle
-import android.os.UserManager
-import android.util.Log
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableFloatStateOf
-import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.Preferences
-import androidx.datastore.preferences.core.booleanPreferencesKey
-import androidx.datastore.preferences.core.edit
-import androidx.datastore.preferences.core.floatPreferencesKey
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.launch
+import moe.chensi.volume.data.App
+import moe.chensi.volume.data.AppPreferencesStore
+import moe.chensi.volume.data.Player
+import moe.chensi.volume.manager.PackageManagerProxy
 import org.joor.Reflect
-import org.joor.ReflectException
 import rikka.shizuku.Shizuku
 import rikka.shizuku.ShizukuProvider
-import java.lang.reflect.InvocationTargetException
 import java.lang.reflect.Method
 
 @SuppressLint("PrivateApi")
-class Manager(context: Context, private val dataStore: DataStore<Preferences>) {
+class Manager(context: Context, dataStore: DataStore<Preferences>) {
     companion object {
         private val getClientPidMethod: Method =
             AudioPlaybackConfiguration::class.java.getDeclaredMethod("getClientPid")
         private val getPlayerProxyMethod: Method =
             AudioPlaybackConfiguration::class.java.getDeclaredMethod("getPlayerProxy")
-        private val setVolumeMethod: Method =
-            Class.forName("android.media.PlayerProxy").getDeclaredMethod(
-                "setVolume", Float::class.javaPrimitiveType
-            )
-
-        private const val TAG = "Manager"
     }
 
-    private var _shizukuReady by mutableStateOf(false)
-    val shizukuReady
-        get() = _shizukuReady
+    enum class ShizukuStatus {
+        Disconnected, PermissionDenied, Connected
+    }
 
-    private var _shizukuPermission by mutableStateOf(false)
-    val shizukuPermission
-        get() = _shizukuPermission
+    private var _shizukuStatus by mutableStateOf(ShizukuStatus.Disconnected)
+    val shizukuStatus
+        get() = _shizukuStatus
 
     val audioManager = context.getSystemService(AudioManager::class.java)!!.apply {
         Reflect.onClass(AudioManager::class.java).call("getService").get<Any>()
             .apply { ToggleableBinderProxy.wrap(this) }
     }
+
     val activityManager = context.getSystemService(ActivityManager::class.java)!!.apply {
         Reflect.onClass(ActivityManager::class.java).call("getService").get<Any>()
             .apply { ToggleableBinderProxy.wrap(this) }
     }
-    private val packageManager: PackageManager = context.packageManager.apply {
-        Reflect.onClass("android.app.ActivityThread").call("getPackageManager").get<Any>()
-            .apply { ToggleableBinderProxy.wrap(this) }
-    }
-    private val userManager = context.getSystemService(UserManager::class.java)!!
-        .apply { Reflect.on(this).get<Any>("mService").apply { ToggleableBinderProxy.wrap(this) } }
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+    private val packageManager = PackageManagerProxy(context)
+
+    private val appPreferencesStore = AppPreferencesStore(dataStore)
 
     val apps = mutableStateMapOf<String, App>()
 
-    init {
-        Shizuku.addBinderReceivedListenerSticky {
-            if (Shizuku.isPreV11()) {
-                return@addBinderReceivedListenerSticky
-            }
-
-            if (Shizuku.checkSelfPermission() == PackageManager.PERMISSION_GRANTED) {
-                _shizukuPermission = true
-                start()
-            } else {
-                _shizukuPermission = false
-            }
-
-            _shizukuReady = true
-        }
-
-        Shizuku.addBinderDeadListener {
-            _shizukuReady = false
-        }
-
-        Shizuku.addRequestPermissionResultListener { _, grantResult ->
-            _shizukuPermission = grantResult == PackageManager.PERMISSION_GRANTED
-            if (_shizukuPermission) {
-                start()
-            }
-        }
-
-        ShizukuProvider.requestBinderForNonProviderProcess(context)
-    }
-
-    data class Player(val config: AudioPlaybackConfiguration, val player: Any)
-
-    data class App(
-        val packageName: String,
-        val name: String,
-        val icon: Drawable,
-        val dataStore: DataStore<Preferences>
-    ) {
-        companion object {
-            val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
-        }
-
-        val players: MutableList<Player> = mutableStateListOf()
-
-        private var _volume by mutableFloatStateOf(1f)
-        fun updateVolume(value: Float, initializing: Boolean) {
-            _volume = value
-
-            if (initializing) {
-                for (player in players) {
-                    setVolumeMethod.invoke(player.player, value)
-                }
-            }
-        }
-
-        var volume
-            get() = _volume
-            set(value) {
-                _volume = value
-
-                for (player in players) {
-                    setVolumeMethod.invoke(player.player, value)
-                }
-
-                scope.launch {
-                    dataStore.edit { preferences ->
-                        preferences[floatPreferencesKey(packageName)] = volume
-                    }
-                }
-            }
-
-        private var _hidden by mutableStateOf(false)
-        var hidden: Boolean
-            get() = _hidden
-            set(value) {
-                _hidden = value
-
-                scope.launch {
-                    dataStore.edit { preferences ->
-                        preferences[booleanPreferencesKey("hidden:$packageName")] = value
-                    }
-                }
-            }
-
-        fun updateHidden(value: Boolean) {
-            _hidden = value
-        }
-    }
-
-    @SuppressLint("MissingPermission")
-    @EnableBinderProxy
-    private fun createApp(packageName: String): App {
-        for (user in Reflect.on(userManager).call("getUserHandles", true).get<List<UserHandle>>()) {
-            try {
-                val appInfo = Reflect.on(packageManager)
-                    .call("getApplicationInfoAsUser", packageName, 0, user).get<ApplicationInfo>()
-
-                Log.d(TAG, "Found app info. userId: $user, packageName: $packageName")
-
-                return App(
-                    packageName,
-                    appInfo.loadLabel(packageManager).toString(),
-                    packageManager.getDrawable(packageName, appInfo.icon, appInfo)
+    private fun reloadApps() {
+        for (app in packageManager.getInstalledApplicationsForAllUsers()) {
+            if (!apps.containsKey(app.packageName)) {
+                apps[app.packageName] = App(
+                    app.packageName,
+                    packageManager.loadLabel(app),
+                    packageManager.getDrawable(app.packageName, app.icon, app)
                         ?: packageManager.defaultActivityIcon,
-                    dataStore
+                    appPreferencesStore.getOrCreate(app.packageName),
+                    appPreferencesStore::save
                 )
-            } catch (e: Exception) {
-                if (((e as? ReflectException)?.cause as? InvocationTargetException)?.cause is PackageManager.NameNotFoundException) {
-                    continue
-                }
-
-                Log.i(TAG, "Failed to get app info. user: $user, packageName: $packageName", e)
-                continue
             }
         }
-
-        Log.d("VolumeManager", "Can't find app info. packageName: $packageName")
-        return App(
-            packageName, packageName, packageManager.defaultActivityIcon, dataStore
-        )
     }
 
-    fun getOrCreateApp(packageName: String): App {
-        return apps.getOrPut(packageName) { createApp(packageName) }
+    private fun getApp(packageName: String): App? {
+        val app = apps[packageName]
+        if (app != null) {
+            return app
+        }
+
+        // Maybe just installed?
+        reloadApps()
+        return apps[packageName]
     }
 
     @EnableBinderProxy
     private fun initialize() {
-        val playbackConfigurations = audioManager.activePlaybackConfigurations
+        reloadApps()
 
+        val playbackConfigurations = audioManager.activePlaybackConfigurations
         processAudioPlaybackConfigurations(playbackConfigurations)
 
         audioManager.registerAudioPlaybackCallback(
             object : AudioManager.AudioPlaybackCallback() {
                 override fun onPlaybackConfigChanged(configs: MutableList<AudioPlaybackConfiguration>) {
                     for (app in apps.values) {
-                        app.players.clear()
+                        app.clearPlayers()
                     }
                     processAudioPlaybackConfigurations(configs)
                 }
             }, null
         )
-    }
-
-    private fun start() {
-        scope.launch {
-            var initializing = true
-
-            dataStore.data.collect { preferences ->
-                for ((key, value) in preferences.asMap()) {
-                    if (key.name.startsWith("hidden:") && value is Boolean) {
-                        val packageName = key.name.substringAfter("hidden:")
-                        getOrCreateApp(packageName).updateHidden(value)
-                    } else if (value is Float) {
-                        val packageName = key.name
-                        getOrCreateApp(packageName).updateVolume(value, initializing)
-                    }
-                }
-
-                if (initializing) {
-                    initializing = false
-                    initialize()
-                }
-            }
-        }
     }
 
     @SuppressLint("DiscouragedPrivateApi")
@@ -247,19 +104,58 @@ class Manager(context: Context, private val dataStore: DataStore<Preferences>) {
         val runningProcesses = activityManager.runningAppProcesses
 
         for (config in configs) {
-            val player = getPlayerProxyMethod.invoke(config) ?: continue
+            val playerProxy = getPlayerProxyMethod.invoke(config) ?: continue
 
             val pid = getClientPidMethod.invoke(config) as Int
             val process = runningProcesses.find { process -> process.pid == pid } ?: continue
 
-            val packageName = process.processName.split(":")[0]
-            // It's possible to get the user ID from `process.uid / UserHandle.PER_USER_RANGE`.
-            // But since we need to get app info from all users at startup anyway,
-            // let's just reuse the method here.
-            val app = getOrCreateApp(packageName)
+            val packageName = process.pkgList[0] ?: continue
+            val app = getApp(packageName) ?: continue
 
-            setVolumeMethod.invoke(player, app.volume)
-            app.players.add(Player(config, player))
+            app.addPlayer(Player(config, playerProxy))
+        }
+    }
+
+    init {
+        Shizuku.addBinderReceivedListenerSticky {
+            if (Shizuku.isPreV11()) {
+                return@addBinderReceivedListenerSticky
+            }
+
+            if (Shizuku.checkSelfPermission() == PackageManager.PERMISSION_GRANTED) {
+                _shizukuStatus = ShizukuStatus.Connected
+                start()
+            } else {
+                _shizukuStatus = ShizukuStatus.PermissionDenied
+            }
+        }
+
+        Shizuku.addBinderDeadListener {
+            _shizukuStatus = ShizukuStatus.Disconnected
+        }
+
+        Shizuku.addRequestPermissionResultListener { _, grantResult ->
+            if (grantResult == PackageManager.PERMISSION_GRANTED) {
+                _shizukuStatus = ShizukuStatus.Connected
+                start()
+            }
+        }
+
+        ShizukuProvider.requestBinderForNonProviderProcess(context)
+    }
+
+    private fun start() {
+        appPreferencesStore.track { first ->
+            for ((packageName, index) in appPreferencesStore.indices) {
+                if (!first) {
+                    // Replace with new reference
+                    getApp(packageName)?.setPreferences(appPreferencesStore.values[index])
+                }
+            }
+
+            if (first) {
+                initialize()
+            }
         }
     }
 }

@@ -4,6 +4,7 @@ plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
     alias(libs.plugins.kotlin.compose)
+    alias(libs.plugins.kotlin.serialization)
     alias(libs.plugins.baselineprofile)
 
     id("com.google.devtools.ksp")
@@ -100,6 +101,7 @@ dependencies {
     implementation(libs.androidaop.core)
     implementation(libs.androidx.appcompat)
     implementation(libs.androidx.profileinstaller)
+    implementation(libs.kotlinx.serialization.json)
     "baselineProfile"(project(":baselineprofile"))
     ksp(libs.androidaop.apt)
 

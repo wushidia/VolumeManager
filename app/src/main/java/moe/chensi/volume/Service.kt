@@ -55,6 +55,9 @@ import androidx.savedstate.SavedStateRegistry
 import androidx.savedstate.SavedStateRegistryController
 import androidx.savedstate.SavedStateRegistryOwner
 import androidx.savedstate.setViewTreeSavedStateRegistryOwner
+import moe.chensi.volume.compose.AppVolumeList
+import moe.chensi.volume.compose.TrackSlider
+import moe.chensi.volume.manager.ActivityTaskManagerProxy
 import moe.chensi.volume.ui.theme.VolumeManagerTheme
 import org.joor.Reflect
 import java.util.Objects
@@ -317,7 +320,7 @@ class Service : AccessibilityService() {
         accessibilityButtonController.registerAccessibilityButtonCallback(object :
             AccessibilityButtonCallback() {
             override fun onClicked(controller: AccessibilityButtonController?) {
-                if (manager.shizukuPermission) {
+                if (manager.shizukuStatus == Manager.ShizukuStatus.Connected) {
                     showView()
                 }
             }
@@ -349,35 +352,47 @@ class Service : AccessibilityService() {
         unregisterReceiver(broadcastReceiver)
     }
 
-    override fun onKeyEvent(event: KeyEvent): Boolean {
-        Log.i(TAG, "onKeyEvent action = ${event.action}, key code = ${event.keyCode}, shizuku permission = ${manager.shizukuPermission}")
+    val activityTaskManager by lazy { ActivityTaskManagerProxy(this) }
 
-        if (!manager.shizukuPermission) {
+    override fun onKeyEvent(event: KeyEvent): Boolean {
+        if (event.action != KeyEvent.ACTION_DOWN) {
+            return false
+        }
+
+        Log.i(
+            TAG,
+            "onKeyEvent action = ${event.action}, key code = ${event.keyCode}, shizuku permission = ${manager.shizukuStatus}"
+        )
+
+        if (manager.shizukuStatus != Manager.ShizukuStatus.Connected) {
+            return false
+        }
+
+        val packageName = activityTaskManager.getForegroundTask()
+        Log.i(TAG, "onKeyEvent packageName = $packageName")
+        val app = manager.apps[packageName]
+        if (app != null && app.disableVolumeButtons) {
             return false
         }
 
         when (event.keyCode) {
             KeyEvent.KEYCODE_VOLUME_UP -> {
-                if (event.action == KeyEvent.ACTION_DOWN) {
-                    if (view != null) {
-                        manager.audioManager.adjustSuggestedStreamVolume(
-                            AudioManager.ADJUST_RAISE, AudioManager.USE_DEFAULT_STREAM_TYPE, 0
-                        )
-                    }
-                    showView()
+                if (view != null) {
+                    manager.audioManager.adjustSuggestedStreamVolume(
+                        AudioManager.ADJUST_RAISE, AudioManager.USE_DEFAULT_STREAM_TYPE, 0
+                    )
                 }
+                showView()
                 return true
             }
 
             KeyEvent.KEYCODE_VOLUME_DOWN -> {
-                if (event.action == KeyEvent.ACTION_DOWN) {
-                    if (view != null) {
-                        manager.audioManager.adjustSuggestedStreamVolume(
-                            AudioManager.ADJUST_LOWER, AudioManager.USE_DEFAULT_STREAM_TYPE, 0
-                        )
-                    }
-                    showView()
+                if (view != null) {
+                    manager.audioManager.adjustSuggestedStreamVolume(
+                        AudioManager.ADJUST_LOWER, AudioManager.USE_DEFAULT_STREAM_TYPE, 0
+                    )
                 }
+                showView()
                 return true
             }
         }

@@ -46,6 +46,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import moe.chensi.volume.compose.AppVolumeList
 import moe.chensi.volume.ui.theme.VolumeManagerTheme
 import org.joor.Reflect
 import rikka.shizuku.Shizuku
@@ -127,7 +128,7 @@ class MainActivity : ComponentActivity() {
                 Scaffold(
                     modifier = Modifier.fillMaxSize(), topBar = {
                         TopAppBar(title = { Text("Volume Manager") }, actions = {
-                            if (manager.shizukuPermission) {
+                            if (manager.shizukuStatus == Manager.ShizukuStatus.Connected) {
                                 TooltipBox(
                                     positionProvider = TooltipDefaults.rememberTooltipPositionProvider(
                                         TooltipAnchorPosition.Below,
@@ -153,31 +154,8 @@ class MainActivity : ComponentActivity() {
                             .padding(innerPadding)
                             .padding(16.dp)
                     ) {
-                        if (manager.shizukuReady) {
-                            if (manager.shizukuPermission) {
-                                AccessibilityService()
-                                AppVolumeList(manager.apps.values, showAll)
-                            } else {
-                                Column(
-                                    modifier = Modifier.fillMaxSize(),
-                                    horizontalAlignment = Alignment.CenterHorizontally,
-                                    verticalArrangement = Arrangement.spacedBy(
-                                        16.dp, Alignment.CenterVertically
-                                    )
-                                ) {
-                                    Text("Shizuku is installed and enabled")
-                                    Text(
-                                        textAlign = TextAlign.Center,
-                                        text = "Allow volume manager to access Shizuku?"
-                                    )
-
-                                    Button(onClick = { Shizuku.requestPermission(0) }) {
-                                        Text(text = "Add permission")
-                                    }
-                                }
-                            }
-                        } else {
-                            Column(
+                        when (manager.shizukuStatus) {
+                            Manager.ShizukuStatus.Disconnected -> Column(
                                 modifier = Modifier.fillMaxSize(),
                                 horizontalAlignment = Alignment.CenterHorizontally,
                                 verticalArrangement = Arrangement.spacedBy(
@@ -189,6 +167,30 @@ class MainActivity : ComponentActivity() {
                                     textAlign = TextAlign.Center,
                                     text = "Make sure Shizuku is installed and enabled"
                                 )
+                            }
+
+                            Manager.ShizukuStatus.PermissionDenied ->
+                                Column(
+                                    modifier = Modifier.fillMaxSize(),
+                                    horizontalAlignment = Alignment.CenterHorizontally,
+                                    verticalArrangement = Arrangement.spacedBy(
+                                        16.dp, Alignment.CenterVertically
+                                    )
+                                ) {
+                                    Text("Shizuku is installed and enabled")
+                                    Text(
+                                        textAlign = TextAlign.Center,
+                                        text = "Allow App Volume Manager to access Shizuku?"
+                                    )
+
+                                    Button(onClick = { Shizuku.requestPermission(0) }) {
+                                        Text(text = "Request permission")
+                                    }
+                                }
+
+                            Manager.ShizukuStatus.Connected -> {
+                                AccessibilityService()
+                                AppVolumeList(manager.apps.values, showAll)
                             }
                         }
                     }
