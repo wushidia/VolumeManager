@@ -403,42 +403,65 @@ class Service : AccessibilityService() {
         return false
     }
 
-    @Composable
-    fun StreamVolumeSlider(
-        streamType: Int,
-        triggerChange: Int,
-        icon: ImageVector,
-        name: String,
-        onChange: (() -> Unit)? = null
-    ) {
-        var volume by remember { mutableIntStateOf(manager.audioManager.getStreamVolume(streamType)) }
+@Composable
+fun StreamVolumeSlider(
+    streamType: Int,
+    triggerChange: Int,
+    icon: ImageVector,
+    name: String,
+    onChange: (() -> Unit)? = null
+) {
+    var displayVolume by remember { mutableIntStateOf(manager.audioManager.getStreamVolume(streamType)) }
+    var pendingVolume by remember { mutableIntStateOf<Int?>(null) }
+    
+    val scope = rememberCoroutineScope()
 
-        LaunchedEffect(triggerChange) {
-            volume = manager.audioManager.getStreamVolume(streamType)
-        }
-
-        TrackSlider(
-            cornerRadius = 20.dp,
-            value = volume.toFloat(),
-            valueRange = 0f..manager.audioManager.getStreamMaxVolume(streamType).toFloat(),
-            onValueChange = { value ->
-                manager.audioManager.setStreamVolume(streamType, value.toInt(), 0)
-                onChange?.invoke()
-            },
-        ) {
-            Row(
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier.padding(16.dp, 8.dp)
-            ) {
-                Icon(
-                    imageVector = icon,
-                    contentDescription = name,
-                    modifier = Modifier.size(32.dp),
-                )
-
-                Text(text = name)
+    // 防抖 + 异步更新
+    LaunchedEffect(pendingVolume) {
+        pendingVolume?.let { target ->
+            delay(30) // 30ms 防抖
+            if (pendingVolume == target) { // 确保是最新值
+                withContext(Dispatchers.IO) {
+                    try {
+                        manager.audioManager.setStreamVolume(streamType, target, 0)
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Failed to set volume", e)
+                    }
+                }
+                pendingVolume = null
             }
         }
     }
+
+    LaunchedEffect(triggerChange) {
+        if (pendingVolume == null) {
+            displayVolume = manager.audioManager.getStreamVolume(streamType)
+        }
+    }
+
+    TrackSlider(
+        cornerRadius = 20.dp,
+        value = displayVolume.toFloat(),
+        valueRange = 0f..manager.audioManager.getStreamMaxVolume(streamType).toFloat(),
+        onValueChange = { value ->
+            val newVolume = value.toInt()
+            displayVolume = newVolume // UI 立即响应
+            pendingVolume = newVolume // 触发异步更新
+            onChange?.invoke()
+        },
+    ) {
+        Row(
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.padding(16.dp, 8.dp)
+        ) {
+            Icon(
+                imageVector = icon,
+                contentDescription = name,
+                modifier = Modifier.size(32.dp),
+            )
+            Text(text = name)
+        }
+    }
+}
 }
