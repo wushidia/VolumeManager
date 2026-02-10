@@ -25,6 +25,7 @@ jobs:
         run: ./gradlew assembleRelease
 
       - name: Sign APK
+        if: ${{ secrets.KEYSTORE_FILE != '' }}
         run: |
           echo "${{ secrets.KEYSTORE_FILE }}" | base64 -d > keystore.jks
           $ANDROID_HOME/build-tools/34.0.0/zipalign -c -v 4 app/build/outputs/apk/release/app-release-unsigned.apk
