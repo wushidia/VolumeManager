@@ -56,6 +56,13 @@ import androidx.savedstate.SavedStateRegistry
 import androidx.savedstate.SavedStateRegistryController
 import androidx.savedstate.SavedStateRegistryOwner
 import androidx.savedstate.setViewTreeSavedStateRegistryOwner
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.rememberCoroutineScope
 import moe.chensi.volume.compose.AppVolumeList
 import moe.chensi.volume.compose.TrackSlider
 import moe.chensi.volume.system.ActivityTaskManagerProxy
@@ -412,7 +419,7 @@ fun StreamVolumeSlider(
     onChange: (() -> Unit)? = null
 ) {
     var displayVolume by remember { mutableIntStateOf(manager.audioManager.getStreamVolume(streamType)) }
-    var pendingVolume by remember { mutableIntStateOf<Int?>(null) }
+    var pendingVolume by remember { mutableStateOf<Int?>(null) }
     
     val scope = rememberCoroutineScope()
 
@@ -460,6 +467,7 @@ fun StreamVolumeSlider(
                 contentDescription = name,
                 modifier = Modifier.size(32.dp),
             )
+
             Text(text = name)
         }
     }
